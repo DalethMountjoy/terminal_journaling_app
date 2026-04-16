@@ -110,7 +110,7 @@ def git_backup():
 
 # ── editor ─────────────────────────────────────────────────────────────────────
 
-BANNER = pyfiglet.figlet_format("Time to write", font="soft", width=200).strip()
+BANNER = pyfiglet.figlet_format("Time to write", font="small_slant", width=200).strip()
 
 def run_editor(initial_text=""):
     """Full-screen multiline editor. Returns text on Ctrl+S, None on Ctrl+Q.
