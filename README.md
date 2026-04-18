@@ -3,7 +3,7 @@
 A minimal terminal journaling app. Write dated entries, track streaks, and optionally
 chat with Claude — all from the command line.
 
-![home screen with ASCII banner, weekly tracker, and menu](screenshot.png)
+![home screen with ASCII banner, weekly tracker, and menu](screenshot_1.png)
 
 ---
 
