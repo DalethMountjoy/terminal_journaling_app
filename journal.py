@@ -2,6 +2,7 @@
 """journal.py — a minimal terminal journaling app"""
 
 import os
+import re
 import random
 import subprocess
 from datetime import date, datetime, timedelta
@@ -13,7 +14,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 import readchar
-from prompt_toolkit import Application
+from prompt_toolkit import Application, prompt as pt_prompt
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
@@ -30,6 +31,7 @@ from pygments.lexers.markup import MarkdownLexer
 load_dotenv(Path(__file__).parent / ".env")
 JOURNAL_DIR = Path(os.getenv("JOURNAL_DIR", Path(__file__).parent))
 ENTRIES_DIR = JOURNAL_DIR / "entries"
+POETRY_DIR  = JOURNAL_DIR / "poetry"
 PROMPTS_FILE = JOURNAL_DIR / "prompts.txt"
 API_KEY = os.getenv("ANTHROPIC_API_KEY")
 console = Console()
@@ -44,7 +46,12 @@ def load_prompts():
 def list_entries():
     if not ENTRIES_DIR.exists():
         return []
-    return sorted([f for f in os.listdir(ENTRIES_DIR) if f.endswith(".md")], reverse=True)
+    return sorted(ENTRIES_DIR.glob("*.md"), key=lambda p: p.name, reverse=True)
+
+def list_poetry():
+    if not POETRY_DIR.exists():
+        return []
+    return sorted(POETRY_DIR.glob("*.md"), key=lambda p: p.name, reverse=True)
 
 def get_streak():
     day, streak = date.today(), 0
@@ -68,16 +75,23 @@ def get_week_status():
         result.append((day.strftime("%a"), any(f.startswith(day_str) for f in files), day == today))
     return result
 
-def entry_preview(filename):
-    """First non-metadata body line, truncated."""
-    for line in (ENTRIES_DIR / filename).read_text().splitlines():
+def get_on_this_day():
+    today = date.today()
+    this_md = today.strftime("%m-%d")
+    if not ENTRIES_DIR.exists():
+        return []
+    matches = [p for p in ENTRIES_DIR.glob("*.md")
+               if p.name[5:10] == this_md and int(p.name[:4]) < today.year]
+    return sorted(matches, key=lambda p: p.name, reverse=True)
+
+def file_preview(path):
+    for line in path.read_text().splitlines():
         if line.strip() and not line.startswith("<!--"):
             return line.strip()[:60]
     return ""
 
-def entry_body(filename):
-    """Entry text with metadata comment lines stripped."""
-    lines = [l for l in (ENTRIES_DIR / filename).read_text().splitlines() if not l.startswith("<!--")]
+def file_body(path):
+    lines = [l for l in path.read_text().splitlines() if not l.startswith("<!--")]
     return "\n".join(lines).strip()
 
 def fmt_ts(filename):
@@ -99,9 +113,24 @@ def save_entry(text, prompt=None):
     )
     return path
 
+def save_poetry(text):
+    POETRY_DIR.mkdir(exist_ok=True)
+    ts = datetime.now()
+    path = POETRY_DIR / ts.strftime("%Y-%m-%d_%H%M%S.md")
+    path.write_text(
+        f"<!-- DATE: {ts.strftime('%Y-%m-%d %H:%M:%S')} -->\n"
+        f"<!-- WORDS: {len(text.split())} -->\n"
+        f"<!-- POETRY -->\n\n"
+        f"{text}"
+    )
+    return path
+
 def git_backup():
     try:
-        subprocess.run(["git", "-C", str(JOURNAL_DIR), "add", "entries/"], check=True, capture_output=True)
+        dirs = ["entries/"]
+        if POETRY_DIR.exists():
+            dirs.append("poetry/")
+        subprocess.run(["git", "-C", str(JOURNAL_DIR), "add"] + dirs, check=True, capture_output=True)
         msg = f"journal: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         subprocess.run(["git", "-C", str(JOURNAL_DIR), "commit", "-m", msg], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(JOURNAL_DIR), "pull", "--rebase", "origin", "main"], check=True, capture_output=True)
@@ -183,7 +212,6 @@ def run_editor(initial_text=""):
                 "prompt": "ansiyellow",
                 "hint": "fg:ansibrightblack",
                 "confirm": "bold ansiyellow",
-                # markdown syntax highlighting
                 "pygments.token.generic.heading": "bold ansiyellow",
                 "pygments.token.generic.subheading": "bold ansiyellow",
                 "pygments.token.generic.emph": "italic",
@@ -208,10 +236,11 @@ def run_editor(initial_text=""):
 def show_home():
     console.clear()
     entries = list_entries()
-    total = len(entries)
-    streak = get_streak()
-    today_str = date.today().strftime("%Y-%m-%d")
-    today_count = sum(1 for f in entries if f.startswith(today_str))
+    poetry  = list_poetry()
+    total   = len(entries)
+    streak  = get_streak()
+    today_str   = date.today().strftime("%Y-%m-%d")
+    today_count = sum(1 for p in entries if p.name.startswith(today_str))
     week = get_week_status()
 
     console.print()
@@ -222,7 +251,6 @@ def show_home():
     console.print("[yellow]" + "\n".join(pad + l for l in banner_lines) + "[/yellow]")
     console.print()
 
-    # [[Name]] escapes to [Name] in rich markup; " Name " = same width (5 chars)
     days  = "  ".join(f"[[{n}]]" if is_today else f" {n} " for n, _, is_today in week)
     marks = "  ".join("  [yellow]✓[/yellow]  " if has else "  ·  " for _, has, _ in week)
     console.print(days, justify="center")
@@ -238,10 +266,22 @@ def show_home():
         console.print(f"[green]✓ {today_count} {label} today[/green]", justify="center")
         console.print()
 
+    on_this_day = get_on_this_day()
+    if on_this_day:
+        p = on_this_day[0]
+        year = p.name[:4]
+        preview = file_preview(p)[:50]
+        console.print(f"[dim]On this day in {year}:[/dim] {preview}", justify="center")
+        console.print()
+
     console.print("[dim]\\[p] prompted write[/dim]", justify="center")
     console.print("[dim]\\[f] freewrite[/dim]", justify="center")
+    console.print("[dim]\\[o] poetry[/dim]", justify="center")
     if entries:
-        console.print("[dim]\\[v] view past entries[/dim]", justify="center")
+        console.print("[dim]\\[v] view entries[/dim]", justify="center")
+        console.print("[dim]\\[s] search entries[/dim]", justify="center")
+    if poetry:
+        console.print("[dim]\\[w] view poetry[/dim]", justify="center")
     console.print("[dim]\\[?] markdown reference[/dim]", justify="center")
     if API_KEY:
         console.print("[dim]\\[c] claude chat[/dim]", justify="center")
@@ -272,51 +312,87 @@ def write_flow(prompted=False):
     console.print("\n[dim]  press any key to continue[/dim]")
     readchar.readkey()
 
-# ── entry browser ──────────────────────────────────────────────────────────────
+def write_poetry():
+    text = run_editor(initial_text="# ")
+    if not text or not text.strip():
+        return
+    path = save_poetry(text)
+    words = len(text.split())
+    console.clear()
+    console.print(Panel(
+        f"[green]Saved[/green]  ·  [yellow]{words} words[/yellow]\n[dim]{path.name}[/dim]",
+        title="poetry", border_style="dim",
+    ))
+    git_backup()
+    console.print("\n[dim]  press any key to continue[/dim]")
+    readchar.readkey()
 
-def show_browser():
-    entries = list_entries()
+# ── browser & viewer ───────────────────────────────────────────────────────────
+
+def show_browser(paths, title="entries", previews=None):
     idx = 0
     while True:
         console.clear()
         height = console.size.height
         visible = max(1, height - 6)
-        start = max(0, min(idx - visible // 2, len(entries) - visible))
-        end = min(start + visible, len(entries))
-
+        start = max(0, min(idx - visible // 2, len(paths) - visible))
+        end = min(start + visible, len(paths))
         console.print()
-        console.print("[bold]entries[/bold]  [dim]↑↓ navigate  Enter open  q back[/dim]", justify="center")
+        console.print(f"[bold]{title}[/bold]  [dim]↑↓ navigate  Enter open  q back[/dim]", justify="center")
         console.print()
         for i in range(start, end):
-            fname = entries[i]
-            ts = fmt_ts(fname)
-            preview = entry_preview(fname)
+            p = paths[i]
+            ts = fmt_ts(p.name)
+            preview = previews[i] if previews else file_preview(p)
             cursor = "[yellow]›[/yellow] " if i == idx else "  "
             console.print(f"  {cursor}{ts}  [dim]{preview}[/dim]")
         console.print()
-
         key = readchar.readkey()
         if key == readchar.key.UP and idx > 0:
             idx -= 1
-        elif key == readchar.key.DOWN and idx < len(entries) - 1:
+        elif key == readchar.key.DOWN and idx < len(paths) - 1:
             idx += 1
         elif key in (readchar.key.ENTER, "\r", "\n"):
-            show_viewer(entries[idx])
+            show_viewer(paths[idx])
         elif key == "q":
             break
 
-# ── entry viewer ───────────────────────────────────────────────────────────────
-
-def show_viewer(filename):
+def show_viewer(path):
     console.clear()
     console.print(Panel(
-        Markdown(entry_body(filename)),
-        title=f"[dim]{fmt_ts(filename)}[/dim]",
+        Markdown(file_body(path)),
+        title=f"[dim]{fmt_ts(path.name)}[/dim]",
         border_style="dim",
     ))
     console.print("[dim]  q to return[/dim]")
     while readchar.readkey() != "q":
         pass
+
+# ── search ─────────────────────────────────────────────────────────────────────
+
+def show_search():
+    console.clear()
+    try:
+        query = pt_prompt("  search: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not query:
+        return
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    results = []
+    for path in sorted(ENTRIES_DIR.glob("*.md"), key=lambda p: p.name, reverse=True):
+        for line in path.read_text().splitlines():
+            if line.startswith("<!--"):
+                continue
+            if pattern.search(line):
+                results.append((path, line.strip()[:60]))
+                break
+    if not results:
+        console.print(f"\n[dim]  no results for '{query}'[/dim]\n")
+        console.print("[dim]  press any key[/dim]")
+        readchar.readkey()
+        return
+    show_browser([r[0] for r in results], title=f"search: {query}", previews=[r[1] for r in results])
 
 # ── markdown reference ─────────────────────────────────────────────────────────
 
@@ -400,12 +476,20 @@ def main():
     while True:
         show_home()
         key = readchar.readkey()
+        entries = list_entries()
+        poetry  = list_poetry()
         if key == "p":
             write_flow(prompted=True)
         elif key == "f":
             write_flow(prompted=False)
-        elif key == "v" and list_entries():
-            show_browser()
+        elif key == "o":
+            write_poetry()
+        elif key == "v" and entries:
+            show_browser(entries)
+        elif key == "s" and entries:
+            show_search()
+        elif key == "w" and poetry:
+            show_browser(poetry, "poetry")
         elif key == "?":
             show_markdown_ref()
         elif key == "c" and API_KEY:
