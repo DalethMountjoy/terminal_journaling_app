@@ -55,9 +55,13 @@ def list_poetry():
 
 def get_streak():
     day, streak = date.today(), 0
+    all_files = (
+        (os.listdir(ENTRIES_DIR) if ENTRIES_DIR.exists() else []) +
+        (os.listdir(POETRY_DIR) if POETRY_DIR.exists() else [])
+    )
     while True:
         day_str = day.strftime("%Y-%m-%d")
-        if any(f.startswith(day_str) for f in os.listdir(ENTRIES_DIR)):
+        if any(f.startswith(day_str) for f in all_files):
             streak += 1
             day -= timedelta(days=1)
         else:
@@ -67,7 +71,10 @@ def get_streak():
 def get_week_status():
     today = date.today()
     monday = today - timedelta(days=today.weekday())
-    files = os.listdir(ENTRIES_DIR)
+    files = (
+        (os.listdir(ENTRIES_DIR) if ENTRIES_DIR.exists() else []) +
+        (os.listdir(POETRY_DIR) if POETRY_DIR.exists() else [])
+    )
     result = []
     for i in range(7):
         day = monday + timedelta(days=i)
