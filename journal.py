@@ -104,6 +104,7 @@ def git_backup():
         subprocess.run(["git", "-C", str(JOURNAL_DIR), "add", "entries/"], check=True, capture_output=True)
         msg = f"journal: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         subprocess.run(["git", "-C", str(JOURNAL_DIR), "commit", "-m", msg], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(JOURNAL_DIR), "pull", "--rebase", "origin", "main"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(JOURNAL_DIR), "push", "origin", "main"], check=True, capture_output=True)
     except subprocess.CalledProcessError:
         console.print("\n[yellow]⚠ Git push failed. Entry saved locally.[/yellow]")
